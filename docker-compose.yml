@@ -1,0 +1,24 @@
+services:
+  typesense:
+    image: typesense/typesense:27.1
+    container_name: typesense
+    ports:
+      - "8108:8108"
+    volumes:
+      - typesense-data:/data
+    command: >
+      --data-dir /data
+      --api-key=xyz
+      --enable-cors
+
+  semantic-router:
+    build: .
+    container_name: semantic-router
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      - typesense
+
+volumes:
+  typesense-data:
