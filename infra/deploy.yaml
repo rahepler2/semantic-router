@@ -1,0 +1,70 @@
+## ============================================================================
+## deploy-server.yaml — Build, push, and deploy Semantic Router Service
+## ============================================================================
+##
+## Prerequisites:
+##   - Azure CLI >= 2.60 with Bicep (az bicep install)
+##   - Logged in (az login)
+##   - An existing resource group, or permission to create one
+##   - An Azure OpenAI resource with an embedding deployment
+##   - An accessible Typesense instance
+##
+## Usage:
+##   Review the variables below, then run the steps in order.
+## ============================================================================
+
+variables:
+  RESOURCE_GROUP: rg-semantic-router
+  LOCATION: eastus
+  ENVIRONMENT_NAME: prod
+  IMAGE_TAG: latest  # override with git SHA in CI/CD
+
+  # Azure OpenAI
+  AZURE_OPENAI_ENDPOINT: https://<your-resource>.openai.azure.com
+
+  # Typesense
+  TYPESENSE_HOST: <your-typesense-host>
+  TYPESENSE_API_KEY: <your-typesense-api-key>
+
+steps:
+  # 1. Stand up all infrastructure (ACR, ACA env, container app)
+  #    First run creates everything; subsequent runs update in place.
+  - name: Deploy infrastructure
+    run: |
+      az group create --name $RESOURCE_GROUP --location $LOCATION
+
+      az deployment group create \
+        --resource-group $RESOURCE_GROUP \
+        --template-file infra/main.bicep \
+        --parameters \
+          environmentName=$ENVIRONMENT_NAME \
+          azureOpenAiEndpoint=$AZURE_OPENAI_ENDPOINT \
+          typesenseHost=$TYPESENSE_HOST \
+          typesenseApiKey=$TYPESENSE_API_KEY \
+          imageTag=$IMAGE_TAG
+
+  # 2. Build the container image in ACR (no local Docker required)
+  - name: Build and push image to ACR
+    run: |
+      ACR_NAME=$(az deployment group show \
+        --resource-group $RESOURCE_GROUP \
+        --name main \
+        --query 'properties.outputs.acrName.value' -o tsv)
+
+      az acr build \
+        --registry $ACR_NAME \
+        --image semantic-router:$IMAGE_TAG \
+        .
+
+  # 3. Update the container app to pull the new image
+  - name: Update container app
+    run: |
+      ACR_LOGIN_SERVER=$(az deployment group show \
+        --resource-group $RESOURCE_GROUP \
+        --name main \
+        --query 'properties.outputs.acrLoginServer.value' -o tsv)
+
+      az containerapp update \
+        --name semantic-router-$ENVIRONMENT_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --image ${ACR_LOGIN_SERVER}/semantic-router:$IMAGE_TAG
